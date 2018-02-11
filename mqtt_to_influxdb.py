@@ -12,35 +12,86 @@ import random
 import sys
 
 from influxdb import InfluxDBClient
+from threading import Thread
+from collections import deque
 
-def write_data_item(client, device_id, control_id, value):
-    value = value.replace('\n', ' ')
-    if not value:
-        return
+import logging
+logging.basicConfig(format='%(asctime)s %(levelname)s: %(message)s', level=logging.INFO)
+
+class DBWriterThread(Thread):
+    def __init__(self, influx_client, *args, **kwargs):
+        self.influx_client = influx_client
+        self.data_queue = deque()
+
+        super(DBWriterThread, self).__init__(*args, **kwargs)
+
+    def schedule_item(self, client, device_id, control_id, value):
+        item = (client, device_id, control_id, value)
+        self.data_queue.append(item)
+
+    def get_items(self, mininterval, maxitems):
+        """ This will collect items from queue until either 'mininterval' 
+        is over or 'maxitems' items are collected """
+        started = time.time()
+        items = []
+
+        while (time.time() - started < mininterval) and (len(items) < maxitems):
+            try:
+                item = self.data_queue.popleft()
+            except IndexError:
+                time.sleep(mininterval * 0.1)
+            else:
+                items.append(item)
+
+        return items
+
+    def run(self):
+        while True:
+            items = self.get_items(mininterval=0.05, maxitems=50)
+            db_req_body = []
+            stat_clients = set()
+            for client, device_id, control_id, value in items:
+                ser_item = self.serialize_data_item(client, device_id, control_id, value)
+                if ser_item:
+                    db_req_body.append(ser_item)
+                    stat_clients.add(client)
+
+            if db_req_body:
+                logging.info("Write %d items for %d clients" % (len(items), len(stat_clients)))
+                self.influx_client.write_points(db_req_body)
+
+        time.sleep(0.01)
 
 
-    fields = {}
-    try:
-        value_f = float(value)
-        if not math.isnan(value_f):
-            fields["value_f"] = value_f
-    except ValueError:
-        pass
-    if "value_f" not in fields:
-        fields["value_s"] = value
 
-    item = {
-        'measurement': 'mqtt_data',
-        'tags' : {
-            'client' : client,
-            "channel" : '%s/%s' % (device_id, control_id),
-        },
-        "fields" : fields
-    }
+    def serialize_data_item(self, client, device_id, control_id, value):
+        value = value.replace('\n', ' ')
+        if not value:
+            return
 
-    req_body = [item,]
-    print(req_body)
-    influx_client.write_points(req_body)
+
+        fields = {}
+        try:
+            value_f = float(value)
+            if not math.isnan(value_f):
+                fields["value_f"] = value_f
+        except ValueError:
+            pass
+        if "value_f" not in fields:
+            fields["value_s"] = value
+
+        item = {
+            'measurement': 'mqtt_data',
+            'tags' : {
+                'client' : client,
+                "channel" : '%s/%s' % (device_id, control_id),
+            },
+            "fields" : fields
+        }
+
+        return item
+
+db_writer = None
 
 def on_mqtt_message(arg0, arg1, arg2=None):
     if arg2 is None:
@@ -59,7 +110,7 @@ def on_mqtt_message(arg0, arg1, arg2=None):
     if (parts[1] == 'client'):
         client = parts[2]
         parts = parts[3:]
-    
+
     if len(parts) != 4:
         return
 
@@ -67,9 +118,9 @@ def on_mqtt_message(arg0, arg1, arg2=None):
     control_id = parts[3]
     value = msg.payload.decode('utf8')
 
-    write_data_item(client, device_id, control_id, value)
 
-influx_client = None
+    db_writer.schedule_item(client, device_id, control_id, value)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='MQTT retained message deleter', add_help=False)
@@ -105,6 +156,8 @@ if __name__ == '__main__':
 
 
     influx_client = InfluxDBClient('localhost', 8086, database='mqtt_data')
+    db_writer =  DBWriterThread(influx_client, daemon=True)
+    db_writer.start()
 
 
     while 1:
