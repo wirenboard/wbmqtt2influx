@@ -26,21 +26,13 @@ def write_data_item(client, device_id, control_id, value):
             fields["value_f"] = value_f
     except ValueError:
         pass
-    fields["value_s"] = value
-    try:
-        fields["value_b"] = bool(value)
-    except ValueError:
-        pass
-
-
-
+    if "value_f" not in fields:
+        fields["value_s"] = value
 
     item = {
         'measurement': 'mqtt_data',
         'tags' : {
             'client' : client,
-            'did' : device_id,
-            'cid'   : control_id,
             "channel" : '%s/%s' % (device_id, control_id),
         },
         "fields" : fields
