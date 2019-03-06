@@ -2,10 +2,7 @@
 import argparse
 import math
 
-try:
-    import mosquitto
-except ImportError:
-    import paho.mqtt.client as mosquitto
+import paho.mqtt.client
 
 import time
 import random
@@ -144,7 +141,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    client = mosquitto.Mosquitto(client_id=None, clean_session=True)
+    client = paho.mqtt.client.Client(client_id=None, clean_session=True, protocol=paho.mqtt.client.MQTTv31)
 
     if args.username:
         client.username_pw_set(args.username, args.password)
