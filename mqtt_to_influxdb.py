@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 import argparse
 import math
 
@@ -99,14 +99,14 @@ def on_mqtt_message(arg0, arg1, arg2=None):
     if msg.retain:
         return
 
-    parts = msg.topic.split('/')
+    parts = msg.topic.split('/')[1:]
     client = None
     if len(parts) < 4:
         return
 
-    if (parts[1] == 'client'):
-        client = parts[2]
-        parts = parts[3:]
+    if (parts[0] == 'client'):
+        client = parts[1]
+        parts = parts[2:]
 
     if len(parts) != 4:
         return
